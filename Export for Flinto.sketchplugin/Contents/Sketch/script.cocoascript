@@ -1,0 +1,490 @@
+@import 'MochaJSDelegate.js'
+
+var doc, export_directory;
+var export_scale_factor = 1.0;
+var artboard_metadata = [];
+var layerCounter = 0;
+
+var onRun = function(context) {
+
+  doc = context.document
+  var artboards = context.document.currentPage().artboards()
+
+  if (artboards.count() == 0) {
+    var alert = [[NSAlert alloc] init];
+    [alert setMessageText:"You need at least one artboard to export as a Flinto document."];
+    [alert addButtonWithTitle:'Ok'];
+    [alert runModal]
+    return
+  }
+
+  var documentName = context.document.displayName().replace(".sketch", "")
+  log('Document ' + documentName + ' has ' + artboards.count() + ' artboards to export');
+
+  var dialog = new Dialog()
+  var options = dialog.runModal("Export as Flinto Document", artboards.firstObject())
+  if (options[0] != NSAlertFirstButtonReturn) { return; }
+  export_scale_factor = options[1]
+  resolution = options[2]
+  pixelDensity = options[3]
+
+  export_directory = openSavePanel(documentName)
+  if (export_directory == nil) {
+    return
+  }
+
+  var fileManager = [NSFileManager defaultManager],
+      settings_filepath = export_directory + "/metadata.json",
+      settings = [[NSMutableDictionary alloc] init];
+
+  var isDir = MOPointer.alloc().init();
+  if ([fileManager fileExistsAtPath:export_directory isDirectory:isDir]) {
+    if (isDir.value() == 0) {
+      [fileManager removeItemAtPath:export_directory error:0];
+    }
+  }
+
+  var minX = 9999999999, minY = 9999999999
+
+  for (var i = 0; i < artboards.count(); ++i) {
+    var artboard = artboards[i]
+    var r = artboard.absoluteRect()
+    minX = Math.min(minX, r.x())
+    minY = Math.min(minY, r.y())
+  }
+
+  for (var i = artboards.count() - 1; i >= 0; --i) {
+    [doc showMessage:"Exporting " + (artboards.count()-i) + " of " + artboards.count() + " artboards for Flinto."];
+    process_artboard(artboards[i], minX, minY);
+  }
+
+  // Write JSON
+  [settings setValue:pixelDensity forKey:@"scale"];
+  [settings setValue:resolution.width  forKey:@"width"];
+  [settings setValue:resolution.height forKey:@"height"];
+  [settings setValue:artboard_metadata forKey:@"screens"];
+  var metadataJSON = [NSJSONSerialization dataWithJSONObject:settings options:NSJSONWritingPrettyPrinted error:nil];
+  metadataJSON = [[NSString alloc] initWithData:metadataJSON encoding:NSUTF8StringEncoding];
+  [metadataJSON writeToFile:settings_filepath atomically:true encoding:NSUTF8StringEncoding error:null];
+
+  log(artboards.count() + " artboards " + layerCounter + " layers exported.")
+
+  workspace = [[NSWorkspace alloc] init];
+  // [workspace selectFile:export_directory inFileViewerRootedAtPath:@""];
+  [workspace openFile:export_directory];
+};
+
+
+var process_artboard = function(artboard, minX, minY) {
+
+  log("----- processing artboard:" + artboard.name() + "...")
+  var layers_metadata = []
+  for (var i=0; i<[[artboard layers] count]; i++) {
+    var layer = [[artboard layers] objectAtIndex:i];
+    var p = process_layer(layer, artboard)
+    if (p != undefined && p != nil) {
+      layers_metadata.push(p)
+    }
+  }
+
+  var r = artboard.absoluteRect()
+
+  artboard_metadata.push ({
+    'layers':layers_metadata,
+    'id':artboard.objectID(),
+    'name':artboard.name(),
+    'x':(r.x() - minX) * export_scale_factor,
+    'y':(r.y() - minY) * export_scale_factor
+  })
+};
+
+var is_group = function(layer) {
+  return [layer isMemberOfClass:[MSLayerGroup class]] || [layer isMemberOfClass:[MSArtboardGroup class]]
+}
+
+var is_text = function(layer) {
+  return [layer isMemberOfClass:[MSTextLayer class]]
+}
+
+var is_symbol = function(layer) {
+  return [layer parentOrSelfIsSymbol];
+}
+
+var should_ignore_layer = function(layer) {
+  return !![layer name].match(/\-flinto$/)
+}
+
+var should_flatten_layer = function(layer) {
+  return !![layer name].match(/\+flinto$/)
+}
+
+//
+// process layer
+//
+var process_layer = function(layer, artboard) {
+  var layer_data;
+
+  // Ignore hidden layer
+  if ([layer isVisible] == 0) {
+    return nil
+  }
+  if (should_ignore_layer(layer)) {
+    return nil
+  }
+
+  if (is_group(layer) && should_flatten_layer(layer) == false && layer.rotation() == 0) {
+    var sublayers = [layer layers];
+    var layers_holder = []
+    // Sketch returns sublayers in reverse, so we'll iterate backwards
+    for (var sub= 0; sub < [sublayers count] ; sub++) {
+      var current = [sublayers objectAtIndex:sub];
+
+      var clipping = current.hasClippingMask()
+
+      if (is_mask_group(current) || clipping) {
+        if (clipping) {
+          var d = export_mask_layer(layer, sub, artboard)
+        }
+        else {
+          var d = export_mask_layer(current, 0, artboard)
+        }
+        if (d != undefined) {
+          layers_holder.push(d)
+        }
+        if (clipping) {
+          break
+        }
+      }
+      else {
+        var d = process_layer(current, artboard)
+        if (d != undefined) {
+          layers_holder.push(d);
+        }
+      }
+    }
+
+    layer_data = metadata_for(layer, layer, artboard);
+    layer_data.type = "group"
+    layer_data.layers = layers_holder;
+
+  }
+  else {
+    var e = export_layer(layer, artboard);
+    if (e != undefined) {
+      layer_data = e;
+    }
+  }
+
+  return layer_data;
+}
+
+var is_mask_group = function(layer) {
+  if (is_group(layer) && layer.layers().count() > 0) {
+    var clip = layer.layers().objectAtIndex(0)
+    if (clip.hasClippingMask()) {
+      return true
+    }
+  }
+  return false
+}
+
+var copy_layer = function(layer) {
+  var clone = [layer duplicate];
+  clone.style().contextSettings().setOpacity(1)
+  clone.setRotation(0)
+  [clone removeFromParent];
+  [[doc currentPage] addLayers: [clone]];
+  var frame = [clone frame];
+  [frame setX: -999999];
+  [frame setY: -999999];
+  return clone
+}
+
+var export_mask_layer = function(layer, mask_index, artboard) {
+  // Copy off-screen, out of artboard so it is not masked by artboard
+  var layer_copy = copy_layer(layer)
+  var sublayers = [layer_copy layers]
+  var mask_layer = [sublayers objectAtIndex:mask_index];
+
+  // Remove layers below mask layer
+  var toBeRemoved = []
+  for (var i = 0; i < mask_index; ++i) {
+    toBeRemoved.push([sublayers objectAtIndex:i])
+  }
+  for (var i = 0; i < toBeRemoved.length; ++i) {
+    var l = toBeRemoved[i]
+    [l removeFromParent]
+  }
+
+  layer_data = metadata_for(layer, layer_copy, artboard);
+  layer_data.type = "image";
+  layer_data["id"] = mask_layer.objectID()
+
+  // Export PNG
+  var path_to_file = export_directory + "/" + artboard.objectID() + "/" + [mask_layer objectID] + ".png";
+  export_as_slice(layer_copy, path_to_file)
+  [layer_copy removeFromParent];
+  return layer_data;
+
+
+}
+
+var export_layer = function(layer, artboard) {
+  // Copy off-screen, out of artboard so it is not masked by artboard
+  var layer_copy = copy_layer(layer)
+
+  var layer_data = metadata_for(layer, layer_copy, artboard);
+  layer_data.type = "image";
+
+  // Export PNG
+  var path_to_file = export_directory + "/" + artboard.objectID() + "/" + [layer objectID] + ".png";
+  export_as_slice(layer_copy, path_to_file)
+
+  [layer_copy removeFromParent];
+  return layer_data;
+}
+
+var should_trim = function(layer) {
+  if (is_mask_group(layer) || is_text(layer)) {
+    return true
+  }
+  else {
+    return false
+  }
+}
+
+var export_rect = function(layer) {
+  if (should_trim(layer)) {
+    return [MSSliceTrimming simpleSafeRectForSlice:layer];
+  }
+  else {
+    return [MSSliceTrimming trimmedRectForSlice:layer];
+  }
+}
+
+var export_as_slice = function(layer, path) {
+  var slice = [MSExportRequest requestWithRect:export_rect(layer) scale:export_scale_factor];
+  if (should_trim(layer)) {
+    [slice setShouldTrim:false]
+  }
+  [doc saveArtboardOrSlice:slice toFile:path];
+}
+
+var metadata_for = function(layer, layer_copy, artboard) {
+  var gkrect = [GKRect rectWithRect:export_rect(layer_copy)]
+  var center = calculate_center_for(layer, artboard);
+
+  return {
+    x: center.x * export_scale_factor,
+    y: center.y * export_scale_factor,
+    w: gkrect.width()  * export_scale_factor,
+    h: gkrect.height() * export_scale_factor,
+    rotation:layer.rotation(),
+    opacity: layer.style().contextSettings().opacity(),
+    "id": layer.objectID(),
+    name : [layer name],
+    locked: [layer isLocked]
+  };
+}
+
+var calculate_center_for = function(layer, artboard) {
+  var lr = [layer absoluteRect];
+  var ar = [artboard absoluteRect];
+  return {
+    x: (lr.x() - ar.x()) + lr.width() / 2,
+    y: (lr.y() - ar.y()) + lr.height() / 2,
+  }
+}
+
+//
+//
+//
+//
+//
+//
+
+var openSavePanel = function(name) {
+  var panel = [NSSavePanel savePanel]
+  [panel setNameFieldStringValue: name + ".flinto"]
+  if (panel.runModal() == 0) {
+    return nil
+  }
+  var path = panel.URL().path()
+
+  if (!path.match(/\.flinto$/)) {
+    path += ".flinto"
+  }
+  return path
+}
+
+var createLabel = function(text, rect) {
+  var label = [[NSTextField alloc] initWithFrame:rect]
+  label.stringValue = text
+  label.editable = false
+  label.borderd = false
+  label.bezeled = false
+  label.setAlignment(1)
+  label.useSingleLineMode = true
+  label.drawsBackground = false
+  return label
+}
+
+var Dialog = function() {}
+
+Dialog.prototype.runModal = function(msg, artboard) {
+
+  this.artboard = artboard
+
+  this.resolutions = [
+    {width:750,  height:1334}, // iPhone 6
+    {width:1242, height:2208}, // iPhone 6 Plus
+    {width:640,  height:1136}, // iPhone 4 inch
+    {width:2048, height:1536}, // iPhone 4 inch
+    {width:312,  height:390},  // Apple Watch 42mm
+    {width:272,  height:460},  // Apple Watch 38mm
+  ]
+
+  this.deviceSelectedIndex = 6
+  var suggestedScaleFactor = 1.0
+
+  this.isLandscape = false
+
+  var r = this.artboard.absoluteRect()
+  this.initialSize = {width:r.width(), height:r.height()}
+  for (var index = 0; index < this.resolutions.length; index++) {
+    var resolution = this.resolutions[index]
+    if (r.width() == resolution.width || r.width() * 2 == resolution.width || r.width() * 3 == resolution.width ) {
+      this.deviceSelectedIndex = index
+      suggestedScaleFactor = resolution.width / r.width()
+      this.initialSize = {width:(resolution.width / suggestedScaleFactor), height:(resolution.height / suggestedScaleFactor)}
+      break
+    }
+    if (r.width() == resolution.height || r.width() * 2 == resolution.height || r.width() * 3 == resolution.height)  {
+      this.isLandscape = true
+      this.deviceSelectedIndex = index
+      suggestedScaleFactor = resolution.height / r.width()
+      this.initialSize = {width:(resolution.width / suggestedScaleFactor), height:(resolution.height / suggestedScaleFactor)}
+      break
+    }
+  }
+
+  var resolutionLabel = createLabel("Scale", NSMakeRect(16, 112, 94, 17))
+  var combobox = [[NSComboBox alloc] initWithFrame:NSMakeRect(118, 106, 165, 26)];
+
+  this.combobox = combobox
+  var dialog = this
+
+  var delegate = new MochaJSDelegate({
+    "controlTextDidChange:":(function(note) {
+      dialog.updateSizeTextField()
+    }),
+      "comboBoxSelectionIsChanging:": (function(note){
+      dialog.updateSizeTextField()
+      })
+  });
+
+
+
+  [combobox setDelegate:delegate.getClassInstance()];
+  [combobox addItemsWithObjectValues:["50%", "100%", "150%", "200%", "300%"]];
+
+  var deviceLabel = createLabel("Device Size", NSMakeRect(16, 71, 94, 17))
+  var dropdown = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(116, 66, 167, 26)]
+  [dropdown addItemsWithTitles:["iPhone 6", "iPhone 6 Plus", "iPhone (4 inch)", "iPad", "Apple Watch (42mm)", "Apple Watch (38mm)", "Custom"]]
+  [dropdown selectItemAtIndex:this.deviceSelectedIndex]
+
+  var obj = this
+  [dropdown setCOSJSTargetFunction:function(sender) {
+    var index = [sender indexOfSelectedItem]
+    if (index < 6) {
+      var r = obj.resolutions[index]
+      var scale = parseFloat([combobox stringValue].replace(/[^0-9]/g,"")) / 100;
+      obj.initialSize.width = r.width / scale
+      obj.initialSize.height = r.height / scale
+      obj.updateSizeTextField()
+    }
+  }]]
+
+
+  this.widthField = [[NSTextField alloc] initWithFrame:CGRectMake(118, 27, 75, 22)]
+  this.heightField = [[NSTextField alloc] initWithFrame:CGRectMake(205, 27, 75, 22)]
+
+  var widthLabel = createLabel("Width", CGRectMake(118, 8, 75, 18))
+  [widthLabel setAlignment:2]
+  var heightLabel = createLabel("Height", CGRectMake(205, 8, 75, 18))
+  [heightLabel setAlignment:2]
+
+  var scaleFactorIndex = 1
+  if (suggestedScaleFactor != 1) {
+    var scaleFactorIndexs = [3, 4, 3, 3, 3, 3, 1]
+    scaleFactorIndex =  scaleFactorIndexs[this.deviceSelectedIndex]
+  }
+  [combobox selectItemAtIndex:scaleFactorIndex];
+  this.scaleFactor = parseFloat([combobox stringValue].replace(/[^0-9]/g,"")) / 100;
+
+  this.updateSizeTextField()
+
+
+  var view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 300, 150)]
+  [view addSubview:deviceLabel]
+  [view addSubview:resolutionLabel]
+  [view addSubview:combobox]
+  [view addSubview:dropdown]
+
+  [view addSubview:this.widthField]
+  [view addSubview:this.heightField]
+  [view addSubview:widthLabel]
+  [view addSubview:heightLabel]
+
+  var alert = [[NSAlert alloc] init];
+  [alert setMessageText:msg];
+  [alert addButtonWithTitle:'Save'];
+  [alert addButtonWithTitle:'Cancel'];
+  [alert setAccessoryView:view];
+
+  var responseCode = [alert runModal];
+
+  var scale = parseFloat([combobox stringValue].replace(/[^0-9]/g,"")) / 100;
+  var deviceType = [dropdown indexOfSelectedItem]
+  var pixelDensity = 1.0
+  if (deviceType != 6) {
+    pixelDensity = deviceType == 1 ? 3.0 : 2.0
+  }
+
+  resolution.width = this.widthField.doubleValue()
+  resolution.height = this.heightField.doubleValue()
+
+  log(resolution.width + "x" +  resolution.height + "@" + scale + "x " + pixelDensity)
+
+  return [responseCode, scale, resolution, pixelDensity];
+
+}
+
+Dialog.prototype.updateSizeTextField = function() {
+  var index = this.deviceSelectedIndex
+  var wField = this.widthField
+  var hField = this.heightField
+
+  var r = this.initialSize
+  var w = r.width
+  var h = r.height
+
+  if (this.isLandscape) {
+    tmp = w
+    w = h
+    h = tmp
+  }
+
+  var combobox = this.combobox
+  if ([combobox indexOfSelectedItem] != -1) {
+    var s = parseFloat([combobox objectValueOfSelectedItem])/100
+  }
+  else {
+    var s = parseFloat([combobox stringValue].replace(/[^0-9]/g,"")) / 100;
+  }
+
+  [wField setStringValue:w * s];
+  [hField setStringValue:h * s];
+}
+
+//onRun(context)

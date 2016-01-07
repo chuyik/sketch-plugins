@@ -1,0 +1,31 @@
+{
+  "author" : "",
+  "commands" : [
+    {
+      "script" : "script.cocoascript",
+      "handler" : "onRun",
+      "shortcut" : "cmd shift ctrl f",
+      "name" : "Export as Flinto Document",
+      "identifier" : "export-for-flinto",
+      "isRoot" : true
+
+    }
+  ],
+  "menu" : {
+    "items" : [
+      "export-for-flinto"
+    ],
+    "title" : "Export for Flinto",
+    "isRoot" : true,
+  },
+  "identifier" : "com.flinto.sketch-plugin",
+  "description": "Updates assets for importing into Flinto.",
+  "authorEmail" : "hello@flinto.com",
+  "name" : "Export for Flinto",
+  "homepage": "http://www.flinto.com/mac",
+  "version": "1.1",
+  "manifestURL": "https://www.flinto.com/assets/sketchplugin.manifest.json",
+  "downloadURL": "https://www.flinto.com/assets/flinto.sketchplugin.zip",
+  "compatibleVersion": 3.3,
+  "bundleVersion": 1
+}

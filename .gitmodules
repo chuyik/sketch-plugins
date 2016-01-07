@@ -1,0 +1,54 @@
+[submodule "AEFlowchart"]
+	path = AEFlowchart
+	url = https://github.com/tadija/AEFlowchart.git
+[submodule "Arrange Artboards"]
+	path = Arrange Artboards
+	url = https://github.com/kenmoore/sketch-arrange-artboards.git
+[submodule "Sketch Commands"]
+	path = Sketch Commands
+	url = https://github.com/bomberstudios/sketch-commands.git
+[submodule "Fluid"]
+	path = Fluid
+	url = https://github.com/matt-curtis/Fluid-for-Sketch.git
+[submodule "SF UI Font Fixer"]
+	path = SF UI Font Fixer
+	url = https://github.com/kylehickinson/Sketch-SF-UI-Font-Fixer.git
+[submodule "Find And Replace"]
+	path = Find And Replace
+	url = https://github.com/mscodemonkey/Sketch-Find-And-Replace.git
+[submodule "Sketch Style Inventory"]
+	path = Sketch Style Inventory
+	url = https://github.com/getflourish/Sketch-Style-Inventory.git
+[submodule "Sketch Sort Layers"]
+	path = Sketch Sort Layers
+	url = https://github.com/getflourish/Sketch-Sort-Layers.git
+[submodule "Content Generator"]
+	path = Content Generator
+	url = https://github.com/timuric/Content-generator-sketch-plugin.git
+[submodule "Notebook"]
+	path = Notebook
+	url = https://github.com/marcosvidal/Sketch-Notebook.git
+[submodule "Sketch Measure"]
+	path = Sketch Measure
+	url = https://github.com/utom/sketch-measure.git
+[submodule "Smartboards"]
+	path = Smartboards
+	url = https://github.com/chuyik/Smartboards.git
+[submodule "Sketch Palettes"]
+	path = Sketch Palettes
+	url = https://github.com/andrewfiorillo/sketch-palettes.git
+[submodule "Icon Fonts"]
+	path = Icon Fonts
+	url = https://github.com/keremciu/sketch-iconfont.git
+[submodule "Magic Mirror"]
+	path = Magic Mirror
+	url = https://github.com/jamztang/MagicMirror.git
+[submodule "Relabel"]
+	path = Relabel
+	url = https://github.com/kenmoore/sketch-relabel-button.git
+[submodule "Unsplash It"]
+	path = Unsplash It
+	url = https://github.com/fhuel/Unsplash-It-Sketch.git
+[submodule "Sketch Constraints"]
+	path = Sketch Constraints
+	url = https://github.com/bouchenoiremarc/Sketch-Constraints.git
