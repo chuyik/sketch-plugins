@@ -52,3 +52,6 @@
 [submodule "Sketch Constraints"]
 	path = Sketch Constraints
 	url = https://github.com/bouchenoiremarc/Sketch-Constraints.git
+[submodule "Sort Me Sketch"]
+	path = Sort Me Sketch
+	url = https://github.com/romashamin/sort-me-sketch.git
