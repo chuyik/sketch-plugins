@@ -5,25 +5,25 @@
       "script" : "script.cocoascript",
       "handler" : "onRun",
       "shortcut" : "cmd shift ctrl f",
-      "name" : "Export as Flinto Document",
+      "name" : "Send to Flinto",
       "identifier" : "export-for-flinto",
       "isRoot" : true
 
-    }
+    },
   ],
   "menu" : {
-    "items" : [
-      "export-for-flinto"
-    ],
-    "title" : "Export for Flinto",
+    "title" : "Send to Flinto",
     "isRoot" : true,
+    "items" : [
+      "export-for-flinto",
+    ],
   },
   "identifier" : "com.flinto.sketch-plugin",
-  "description": "Updates assets for importing into Flinto.",
+  "description": "Send artboards to Flinto.",
   "authorEmail" : "hello@flinto.com",
-  "name" : "Export for Flinto",
+  "name" : "Send to Flinto",
   "homepage": "http://www.flinto.com/mac",
-  "version": "1.1",
+  "version": "1.3.3",
   "manifestURL": "https://www.flinto.com/assets/sketchplugin.manifest.json",
   "downloadURL": "https://www.flinto.com/assets/flinto.sketchplugin.zip",
   "compatibleVersion": 3.3,

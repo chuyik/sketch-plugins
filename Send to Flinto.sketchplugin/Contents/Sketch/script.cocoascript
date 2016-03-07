@@ -1,0 +1,575 @@
+@import 'MochaJSDelegate.js'
+@import 'ScreenTemplate.js'
+
+var script_version = "1.3";
+var doc, export_directory;
+var export_scale_factor = 1.0;
+var export_offset = 999999;
+
+var onRun = function(context) {
+
+  doc = context.document
+
+  var artboards = []
+  var ab = context.document.currentPage().artboards()
+  for (var i = 0; i < ab.count(); i++) {
+    artboards.push(ab.objectAtIndex(i))
+  }
+
+  var selectedArtboards = []
+  for (var i = 0; i < context.selection.count(); i++) {
+    var obj = context.selection.objectAtIndex(i)
+    if (is_artboard(obj)) {
+      selectedArtboards.push(obj)
+    }
+  }
+
+  if (artboards.length == 0) {
+    var alert = [[NSAlert alloc] init];
+    [alert setMessageText:"You need at least one artboard to export as a Flinto document."];
+    [alert addButtonWithTitle:'Ok'];
+    [alert runModal]
+    return
+  }
+
+  var dialog = new Dialog()
+  var msg = "Send to Flinto"
+
+  var options = dialog.runModal(msg, artboards[0], selectedArtboards.length)
+
+  if (options[0] != NSAlertFirstButtonReturn) { return; }
+  export_scale_factor = options[1]
+  resolution = options[2]
+  pixelDensity = options[3]
+  selectedOnly = options[4]
+
+  export_directory = tempFolder()
+  log(export_directory)
+  if (export_directory == nil) {
+    return
+  }
+
+  if (selectedOnly) {
+    artboards = selectedArtboards
+  }
+  var fileManager = [NSFileManager defaultManager],
+      settings_filepath = export_directory + "/metadata.json",
+      settings = [[NSMutableDictionary alloc] init];
+
+  var isDir = MOPointer.alloc().init();
+  if ([fileManager fileExistsAtPath:export_directory isDirectory:isDir]) {
+    if (isDir.value() == 0) {
+      [fileManager removeItemAtPath:export_directory error:0];
+    }
+  }
+
+  var artboard_metadata = [];
+  for (var i = artboards.length - 1; i >= 0; --i) {
+    [doc showMessage:"Exporting " + (artboards.length-i) + " of " + artboards.length + " artboards for Flinto."];
+    log("Exporting " + (artboards.length-i) + "/" + artboards.length + ": processing \"" + artboards[i].name() + "\"...")
+    artboard_metadata.push(process_artboard(artboards[i]))
+  }
+
+  // Write JSON
+  [settings setValue:pixelDensity forKey:@"scale"];
+  [settings setValue:resolution.width  forKey:@"width"];
+  [settings setValue:resolution.height forKey:@"height"];
+  [settings setValue:artboard_metadata forKey:@"screens"];
+  [settings setValue:doc.currentPage().objectID() forKey:@"id"];
+  [settings setValue:script_version forKey:@"version"];
+  var metadataJSON = [NSJSONSerialization dataWithJSONObject:settings options:NSJSONWritingPrettyPrinted error:nil];
+  metadataJSON = [[NSString alloc] initWithData:metadataJSON encoding:NSUTF8StringEncoding];
+  [metadataJSON writeToFile:settings_filepath atomically:true encoding:NSUTF8StringEncoding error:null];
+
+  log(artboards.length + " artboards exported: " + export_directory)
+
+  workspace = [[NSWorkspace alloc] init];
+  // [workspace selectFile:export_directory inFileViewerRootedAtPath:@""];
+  [workspace openFile:export_directory];
+};
+
+
+var process_artboard = function(artboard) {
+
+  var layers_metadata = []
+  for (var i=0; i<[[artboard layers] count]; i++) {
+    var layer = [[artboard layers] objectAtIndex:i];
+    var p = process_layer(layer, artboard)
+    if (p != undefined && p != nil) {
+      layers_metadata.push(p)
+    }
+  }
+
+  var r = artboard.absoluteRect()
+
+  return {
+    'layers':layers_metadata,
+    'id':artboard.objectID(),
+    'name':artboard.name(),
+    'x':(r.x()) * export_scale_factor,
+    'y':(r.y()) * export_scale_factor,
+    'w':(r.width()) * export_scale_factor,
+    'h':(r.height()) * export_scale_factor,
+  }
+};
+
+//
+// process layer
+//
+var process_layer = function(layer, artboard) {
+  var layer_data;
+
+  // Ignore hidden layer
+  if ([layer isVisible] == 0) {
+    return nil
+  }
+  if (should_ignore_layer(layer)) {
+    return nil
+  }
+  if (is_slice(layer)) {
+    return nil
+  }
+
+  if (is_group(layer) && should_flatten_layer(layer) == false && layer.rotation() == 0) {
+    var sublayers = [layer layers];
+    var layers_holder = []
+    // Sketch returns sublayers in reverse, so we'll iterate backwards
+    for (var sub= 0; sub < [sublayers count] ; sub++) {
+      var current = [sublayers objectAtIndex:sub];
+
+      var clipping = current.hasClippingMask()
+
+      if (is_mask_group(current) || clipping) {
+        if ([current isVisible] == 0) {
+          continue
+        }
+
+        if (clipping) {
+          var d = export_mask_layer(layer, sub, artboard)
+        }
+        else {
+          var d = export_mask_layer(current, 0, artboard)
+        }
+        if (d != undefined) {
+          layers_holder.push(d)
+        }
+        if (clipping) {
+          break
+        }
+      }
+      else {
+        var d = process_layer(current, artboard)
+        if (d != undefined) {
+          layers_holder.push(d);
+        }
+      }
+    }
+
+    layer_data = metadata_for(layer, layer, artboard);
+    layer_data.type = "group"
+    layer_data.layers = layers_holder;
+
+  }
+  else {
+    var e = export_layer(layer, artboard);
+    if (e != undefined) {
+      layer_data = e;
+    }
+  }
+
+  return layer_data;
+}
+
+var is_mask_group = function(layer) {
+  if (is_group(layer) && layer.layers().count() > 0) {
+    var clip = layer.layers().objectAtIndex(0)
+    if (clip.hasClippingMask()) {
+      return true
+    }
+  }
+  return false
+}
+
+var duplicate_and_process_layer = function(layer, callback) {
+
+  // Copy off-screen, out of artboard so it is not masked by artboard
+  var clone = [layer duplicate];
+  var originalOpacity = layer.style().contextSettings().opacity()
+  if (originalOpacity != 1) {
+    clone.style().contextSettings().setOpacity(1)
+    log("Update opacity")
+  }
+  clone.setRotation(0)
+  [clone removeFromParent];
+  [[doc currentPage] addLayers: [clone]];
+  var frame = [clone frame];
+  [frame setX: export_offset];
+  [frame setY: export_offset];
+
+  var result = callback(clone)
+
+  if (originalOpacity != clone.style().contextSettings().opacity()) {
+    log("Revert opacity")
+    clone.style().contextSettings().setOpacity(originalOpacity)
+  }
+
+  [clone removeFromParent];
+
+  return result
+
+}
+
+var export_mask_layer = function(layer, mask_index, artboard) {
+
+  if (mask_index == layer.layers().count() - 1) {
+    log("Ignore mask on top of group")
+    return nil
+  }
+  return duplicate_and_process_layer(layer, function(layer_copy) {
+
+    var sublayers = [layer_copy layers]
+    var mask_layer = [sublayers objectAtIndex:mask_index];
+
+    // Hide layers below mask layer
+    var toBeHidden = []
+    for (var i = 0; i < mask_index; ++i) {
+      var l = [sublayers objectAtIndex:i];
+      if ([l isVisible] != 0) {
+        toBeHidden.push(l);
+      }
+    }
+    for (var i = 0; i < toBeHidden.length; ++i) {
+      toBeHidden[i].setIsVisible(0);
+    }
+
+    layer_data = metadata_for(layer, layer_copy, artboard);
+    layer_data.type = "image";
+    layer_data["id"] = mask_layer.objectID()
+
+    var path_to_file = export_directory + "/" + artboard.objectID() + "/" + [mask_layer objectID] + ".png";
+    export_as_slice(layer_copy, path_to_file)
+
+    for (var i = 0; i < toBeHidden.length; ++i) {
+      toBeHidden[i].setIsVisible(1);
+    }
+
+    return layer_data
+
+  })
+
+}
+
+var export_layer = function(layer, artboard) {
+
+  return duplicate_and_process_layer(layer, function(layer_copy) {
+
+    var layer_data = metadata_for(layer, layer_copy, artboard);
+    layer_data.type = "image";
+
+    var path_to_file = export_directory + "/" + artboard.objectID() + "/" + [layer objectID] + ".png";
+    export_as_slice(layer_copy, path_to_file)
+
+    return layer_data;
+
+  })
+}
+
+var export_rect = function(layer) {
+  return [MSSliceTrimming trimmedRectForSlice:layer];
+}
+
+var export_as_slice = function(layer, path) {
+  var slice = [MSExportRequest requestWithRect:export_rect(layer) scale:export_scale_factor];
+  [doc saveArtboardOrSlice:slice toFile:path];
+}
+
+var metadata_for = function(layer, layer_copy, artboard) {
+  var gkrect = [MSRect rectWithRect:export_rect(layer_copy)]
+  var lr = [layer absoluteRect];
+  var ar = [artboard absoluteRect];
+
+  center = {
+    x: (lr.x() + gkrect.x() - export_offset - ar.x()) + gkrect.width() / 2,
+    y: (lr.y() + gkrect.y() - export_offset - ar.y()) + gkrect.height() / 2,
+  }
+
+  return {
+    x: center.x * export_scale_factor,
+    y: center.y * export_scale_factor,
+    w: gkrect.width()  * export_scale_factor,
+    h: gkrect.height() * export_scale_factor,
+    rotation:layer.rotation(),
+    opacity: layer.style().contextSettings().opacity(),
+    "id": layer.objectID(),
+    name : [layer name],
+    locked: [layer isLocked]
+  };
+}
+
+var is_group = function(layer) {
+  return [layer isMemberOfClass:[MSLayerGroup class]] || [layer isMemberOfClass:[MSArtboardGroup class]]
+}
+
+var is_text = function(layer) {
+  return [layer isMemberOfClass:[MSTextLayer class]]
+}
+
+var is_slice = function(layer) {
+  return [layer isMemberOfClass:[MSSliceLayer class]]
+}
+
+var is_artboard = function(layer) {
+  return [layer isMemberOfClass:[MSArtboardGroup class]];
+}
+
+var is_symbol = function(layer) {
+  return [layer parentOrSelfIsSymbol];
+}
+
+var should_ignore_layer = function(layer) {
+  return !![layer name].match(/\-flinto$/)
+}
+
+var should_flatten_layer = function(layer) {
+  if (!![layer name].match(/\+flinto$/)) {
+    return true
+  }
+  var sublayers = [layer layers];
+  for (var sub= 0; sub < [sublayers count] ; sub++) {
+    var child = [sublayers objectAtIndex:sub];
+    if (is_group(child)) {
+      return false
+    }
+  }
+  return true
+}
+
+
+//
+//
+//
+//
+//
+//
+
+
+var tempFolder = function() {
+
+  globallyUniqueString = [[NSProcessInfo processInfo] globallyUniqueString];
+  tempDirectoryPath = NSTemporaryDirectory()
+  tempDirectoryPath = [tempDirectoryPath stringByAppendingPathComponent:globallyUniqueString];
+  var name = [doc displayName].replace(/\.sketch$/, '') + '.flinto';
+  tempDirectoryPath = [tempDirectoryPath stringByAppendingPathComponent:name];
+  tempDirectoryURL = [NSURL fileURLWithPath:tempDirectoryPath isDirectory:true];
+  [[NSFileManager defaultManager] createDirectoryAtURL:tempDirectoryURL withIntermediateDirectories:true attributes:nil error:nil];
+
+  return tempDirectoryPath;
+}
+
+
+var createLabel = function(text, rect) {
+  var label = [[NSTextField alloc] initWithFrame:rect]
+  label.stringValue = text
+  label.editable = false
+  label.borderd = false
+  label.bezeled = false
+  label.setAlignment(1)
+  label.useSingleLineMode = true
+  label.drawsBackground = false
+  return label
+}
+
+var Dialog = function() {}
+
+Dialog.prototype.runModal = function(msg, artboard, selectedCount) {
+
+  this.artboard = artboard
+
+  var suggestedScaleFactor = 1.0
+  this.isLandscape = false
+
+  var r = this.artboard.absoluteRect()
+  this.initialSize = {width:r.width(), height:r.height()}
+
+  var resolutionLabel = createLabel("Scale", NSMakeRect(16, 122, 94, 17))
+  var combobox = [[NSComboBox alloc] initWithFrame:NSMakeRect(118, 116, 165, 26)];
+
+  this.combobox = combobox
+  var dialog = this
+
+  var delegate = new MochaJSDelegate({
+    "controlTextDidChange:":(function(note) {
+      dialog.updateSizeTextField()
+    }),
+      "comboBoxSelectionIsChanging:": (function(note){
+      dialog.updateSizeTextField()
+      })
+  });
+
+
+  var obj = this;
+  var menuItemCallback = function(item) {
+    var tmpl = item.representedObject()
+    var w = tmpl["width"]
+    var h = tmpl["height"]
+    if (w != 0 && h != 0) {
+      var scale = parseFloat([combobox stringValue].replace(/[^0-9]/g,"")) / 100;
+      obj.initialSize.width = w / scale
+      obj.initialSize.height = h / scale
+      obj.isLandscape = w > h ? true : false
+      obj.updateSizeTextField()
+    }
+  }
+
+
+  [combobox setDelegate:delegate.getClassInstance()];
+  [combobox addItemsWithObjectValues:["50%", "100%", "150%", "200%", "300%"]];
+
+  var setInitialSize = false
+  var pixelDensity = 1.0
+
+  var deviceLabel = createLabel("Device Size", NSMakeRect(16, 81, 94, 17))
+  var dropdown = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(116, 76, 167, 26)]
+  for (index in screenTemplate) {
+    var category = screenTemplate[index]
+    [[dropdown menu] addItemWithTitle:category["category"] action: "" keyEquivalent: ""]
+
+    for (var i in category["templates"]) {
+      var tmpl = category["templates"][i]
+      var item = [[NSMenuItem alloc] initWithTitle:tmpl["name"] action: "didChooseTempalte" keyEquivalent: ""]
+      item.indentationLevel = 1
+      item.representedObject = tmpl
+      [item setCOSJSTargetFunction:menuItemCallback]
+      [[dropdown menu] addItem:item];
+
+      if (setInitialSize == false) {
+        var width = tmpl["width"]
+        var height = tmpl["height"]
+
+        if (r.width() == width || r.width() * 2 == width || r.width() * 3 == width ) {
+          [dropdown selectItem:item]
+          suggestedScaleFactor = width / r.width()
+          pixelDensity = tmpl["density"]
+          this.initialSize = {width:(width / suggestedScaleFactor), height:(height / suggestedScaleFactor)}
+          setInitialSize = true
+        }
+        if (r.width() == height || r.width() * 2 == height || r.width() * 3 == height)  {
+          this.isLandscape = true
+          [dropdown selectItem:item]
+          suggestedScaleFactor = height / r.width()
+          this.initialSize = {width:(width / suggestedScaleFactor), height:(height / suggestedScaleFactor)}
+          pixelDensity = tmpl["density"]
+          setInitialSize = true
+        }
+      }
+
+    }
+
+    [[dropdown menu] addItem:[NSMenuItem separatorItem]]
+
+  }
+
+  var item = [[NSMenuItem alloc] initWithTitle:"Custom" action: "didChooseTempalte" keyEquivalent: ""]
+  item.representedObject = {"name":"Custom", "width":0, "height":0}
+  [item setCOSJSTargetFunction:menuItemCallback]
+  [[dropdown menu] addItem:item];
+
+  if (setInitialSize == false) {
+    [dropdown selectItem:item]
+  }
+
+
+  this.widthField = [[NSTextField alloc] initWithFrame:CGRectMake(118, 39, 75, 22)]
+  this.heightField = [[NSTextField alloc] initWithFrame:CGRectMake(205, 39, 75, 22)]
+
+  var widthLabel = createLabel("Width", CGRectMake(118, 21, 75, 18))
+  [widthLabel setAlignment:2]
+  [widthLabel setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]]
+  var heightLabel = createLabel("Height", CGRectMake(205, 21, 75, 18))
+  [heightLabel setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]]
+  [heightLabel setAlignment:2]
+
+  var checkBox = [[NSButton alloc] initWithFrame:CGRectMake(38, 0, 250, 18)]
+  [checkBox setButtonType:NSSwitchButton];
+  // [checkBox setObjectValue:flag[@"id"]];
+  [checkBox setState:false];
+  [checkBox setTitle:@"Export only selected artboards"];
+  if (selectedCount == 0) {
+    [checkBox setEnabled:false];
+  }
+
+  var scaleFactorIndex = 1;
+  if (suggestedScaleFactor > 1) {
+    var index = parseInt(suggestedScaleFactor);
+    var scaleFactorIndexs = [1, 1, 3, 4];
+    if (index < 4) {
+      scaleFactorIndex = scaleFactorIndexs[index];
+    }
+  }
+  [combobox selectItemAtIndex:scaleFactorIndex];
+  this.scaleFactor = parseFloat([combobox stringValue].replace(/[^0-9]/g,"")) / 100;
+
+  this.updateSizeTextField()
+
+
+  var view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 300, 150)]
+  [view addSubview:deviceLabel]
+  [view addSubview:resolutionLabel]
+  [view addSubview:combobox]
+  [view addSubview:dropdown]
+
+  [view addSubview:this.widthField]
+  [view addSubview:this.heightField]
+  [view addSubview:widthLabel]
+  [view addSubview:heightLabel]
+  [view addSubview:checkBox]
+
+  var alert = [[NSAlert alloc] init];
+  [alert setMessageText:msg];
+  [alert addButtonWithTitle:'Send'];
+  [alert addButtonWithTitle:'Cancel'];
+  [alert setAccessoryView:view];
+
+  var responseCode = [alert runModal];
+
+  var scale = parseFloat([combobox stringValue].replace(/[^0-9]/g,"")) / 100;
+  var deviceType = [dropdown indexOfSelectedItem]
+  var selectedOnly = [checkBox state];
+
+  resolution = {"width":this.widthField.doubleValue(), "height":this.heightField.doubleValue()}
+
+  log(resolution.width + "x" +  resolution.height + "@" + scale + "x " + pixelDensity)
+
+
+  return [responseCode, scale, resolution, pixelDensity, selectedOnly];
+
+}
+
+Dialog.prototype.updateSizeTextField = function() {
+  var index = this.deviceSelectedIndex
+  var wField = this.widthField
+  var hField = this.heightField
+
+  var r = this.initialSize
+  var w = r.width
+  var h = r.height
+
+  if (this.isLandscape) {
+    tmp = w
+    w = h
+    h = tmp
+  }
+
+  var combobox = this.combobox
+  if ([combobox indexOfSelectedItem] != -1) {
+    var s = parseFloat([combobox objectValueOfSelectedItem])/100
+  }
+  else {
+    var s = parseFloat([combobox stringValue].replace(/[^0-9]/g,"")) / 100;
+  }
+
+  [wField setStringValue:w * s];
+  [hField setStringValue:h * s];
+}
+
+//onRun(context)
