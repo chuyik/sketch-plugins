@@ -55,3 +55,6 @@
 [submodule "Sort Me Sketch"]
 	path = Sort Me Sketch
 	url = https://github.com/romashamin/sort-me-sketch.git
+[submodule "Cemre Sketch Plugins"]
+	path = Cemre Sketch Plugins
+	url = https://github.com/cemre/cemre-sketch-plugins.git
