@@ -42,7 +42,7 @@
 	url = https://github.com/keremciu/sketch-iconfont.git
 [submodule "Magic Mirror"]
 	path = Magic Mirror
-	url = https://github.com/jamztang/MagicMirror.git
+	url = https://github.com/MagicSketch/MagicMirror.git
 [submodule "Relabel"]
 	path = Relabel
 	url = https://github.com/kenmoore/sketch-relabel-button.git
