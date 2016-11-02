@@ -58,3 +58,6 @@
 [submodule "Cemre Sketch Plugins"]
 	path = Cemre Sketch Plugins
 	url = https://github.com/cemre/cemre-sketch-plugins.git
+[submodule "Artboard Tricks"]
+	path = Artboard Tricks
+	url = https://github.com/romannurik/Sketch-ArtboardTricks.git
