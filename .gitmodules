@@ -61,3 +61,9 @@
 [submodule "Artboard Tricks"]
 	path = Artboard Tricks
 	url = https://github.com/romannurik/Sketch-ArtboardTricks.git
+[submodule "SVGO Compressor"]
+	path = SVGO Compressor
+	url = https://github.com/BohemianCoding/svgo-compressor.git
+[submodule "Bitmap Compressor"]
+	path = Bitmap Compressor
+	url = https://github.com/BohemianCoding/sketch-image-compressor.git
