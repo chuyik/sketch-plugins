@@ -67,3 +67,6 @@
 [submodule "Bitmap Compressor"]
 	path = Bitmap Compressor
 	url = https://github.com/BohemianCoding/sketch-image-compressor.git
+[submodule "Align To"]
+	path = Align To
+	url = https://github.com/LucienLee/AlignTo.git
