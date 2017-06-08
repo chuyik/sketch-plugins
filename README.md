@@ -14,6 +14,7 @@ typing the following cryptic words in `Terminal` app:
 
 - Update plugins to latest commit
     ```bash
+    git submodule foreach --recursive git stash
     git submodule foreach --recursive git pull origin master
     ```
 

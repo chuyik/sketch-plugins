@@ -70,3 +70,9 @@
 [submodule "Align To"]
 	path = Align To
 	url = https://github.com/LucienLee/AlignTo.git
+[submodule "Sketch Export Assets"]
+	path = Sketch Export Assets
+	url = https://github.com/GeertWille/sketch-export-assets.git
+[submodule "PDF Export"]
+	path = PDF Export
+	url = https://github.com/DWilliames/PDF-export-sketch-plugin.git
