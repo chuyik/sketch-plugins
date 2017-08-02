@@ -70,6 +70,3 @@
 [submodule "Align To"]
 	path = Align To
 	url = https://github.com/LucienLee/AlignTo.git
-[submodule "Remove Unused Symbols"]
-	path = Remove Unused Symbols
-	url = https://github.com/sketchplugins/remove-unused-symbols.git
