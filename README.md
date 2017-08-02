@@ -17,6 +17,11 @@ typing the following cryptic words in `Terminal` app:
     git submodule foreach --recursive git pull origin master
     ```
 
+- Update plugins to latest commit and ignore local changes
+   ```bash
+   git submodule foreach --recursive git reset --hard origin/master
+   ```
+
 - Add a new plugin
     ```bash
     git submodule add https://github.com/fhuel/Unsplash-It-Sketch.git "Unsplash It"
